@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <style type="text/css">
+      body,html,#container{
+        width: 100%;
+        height: 100%;
+        margin: 0px
+      }
+    </style>
+    <title>API加载</title>
+  </head>
+  <body>
+    <div id="container" tabindex="0"></div>
+    <script type="text/javascript">
+		var map;
+        window.init = function(){
+            map = new AMap.Map('container', {
+               resizeEnable: true,
+			   features:['bg','road']
+            });
+			//https://github.com/fanfeilong/cefutil/blob/master/doc/CEF_JavaScript_Cpp.md
+			//searchAndDraw(121.135042,30.028951,121.15658,30.043389)
+			app.setMessageCallback('searchAndDraw', searchAndDraw);
+		}
+		
+		function searchResult(status, result)
+		{
+			if (status === 'complete') {
+				// 创建一个 Icon
+				var startIcon = new AMap.Icon({
+				// 图标尺寸
+				size: new AMap.Size(25, 34),
+				// 图标的取图地址
+				image: 'dir-marker.png',
+				// 图标所用图片大小
+				imageSize: new AMap.Size(135, 40),
+				// 图标取图偏移量
+				imageOffset: new AMap.Pixel(-9, -3)
+				});
+				
+				// 将 icon 传入 marker
+				var startMarker = new AMap.Marker({
+					position: result.origin,
+					icon: startIcon,
+					offset: new AMap.Pixel(-13, -30)
+				});
+				
+				// 创建一个 Icon
+				var endIcon = new AMap.Icon({
+				// 图标尺寸
+				size: new AMap.Size(25, 34),
+				// 图标的取图地址
+				image: 'dir-marker.png',
+				// 图标所用图片大小
+				imageSize: new AMap.Size(135, 40),
+				// 图标取图偏移量
+				imageOffset: new AMap.Pixel(-95, -3)
+				});
+				
+				// 将 icon 传入 marker
+				var endMarker = new AMap.Marker({
+					position: result.destination,
+					icon: endIcon,
+					offset: new AMap.Pixel(-13, -30)
+				});
+				
+				map.add([startMarker, endMarker]);						
+	
+				var path = new Array()
+				for(var i in result.routes[0].steps){
+					for(var j in result.routes[0].steps[i].path){
+						path.push(result.routes[0].steps[i].path[j]);
+					}
+				}
+				var polyline = new AMap.Polyline({
+				path: path,
+				isOutline: true,
+				outlineColor: '#ffeeff',
+				borderWeight: 3,
+				strokeColor: "#3366FF", 
+				strokeOpacity: 1,
+				strokeWeight: 6,
+				// 折线样式还支持 'dashed'
+				strokeStyle: "solid",
+				// strokeStyle是dashed时有效
+				strokeDasharray: [10, 5],
+				lineJoin: 'round',
+				lineCap: 'round',
+				zIndex: 50,
+				})
+				
+				polyline.setMap(map)
+				// 缩放地图到合适的视野级别
+				map.setFitView([ polyline ])
+				
+				app.sendMessage('MSG_SEARCH_FINISH',0);
+			} 
+		}
+		
+		function searchAndDraw(sLng,sLat,eLng,eLat){
+			var driving = new AMap.Driving({
+				policy:AMap.DrivingPolicy.LEAST_TIME,
+				showTraffic:false,			
+			});//驾车路线规划
+			
+			// 根据起终点经纬度规划驾车导航路线
+			driving.search(new AMap.LngLat(sLng, sLat), 
+				new AMap.LngLat(eLng, eLat), 
+				searchResult);				
+		}
+    </script>
+    <script src="https://webapi.amap.com/maps?v=1.4.10&key=8325164e247e15eea68b59e89200988b&callback=init&plugin=AMap.Driving"></script>
+  </body>
+</html>
