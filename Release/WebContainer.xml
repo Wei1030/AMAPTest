@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ServiceCfg>
+  <!--self-provide 自身提供的服务-->
+  <self-provide>
+    <serviceKey>WebContainer</serviceKey>
+    <!--modules 自身提供的一些服务如果在其他dll模块中，请在此列举 (可选项)
+    <modules>
+      <module Path="Module\xxxModule\" FileName="xxx.dll" Key="xxx"/>
+    </modules>-->
+  </self-provide>
+  <!--others-provide 其他进程提供的服务（可选项）-->
+  <others-provide>
+    <services>
+      <service Path="core\Chromium\" FileName="MainBrowser.exe" Key="Chromium"/>
+    </services>
+  </others-provide>
+</ServiceCfg>
