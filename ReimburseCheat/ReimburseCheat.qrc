@@ -1,0 +1,9 @@
+<RCC>
+  <qresource prefix="ReimburseCheat">
+    <file>Resources/hour.jpeg</file>
+    <file>Resources/minute.png</file>
+    <file>Resources/exmple.png</file>
+    <file>Resources/back.png</file>
+    <file>Resources/1.png</file>
+  </qresource>
+</RCC>
