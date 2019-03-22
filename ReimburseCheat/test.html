@@ -1,0 +1,174 @@
+<!doctype html>
+<html>
+ <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+ <body>
+   	<div class="player_border">
+      <canvas class="player_wnd" id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
+    </div>
+	
+    <p>
+		<button onClick="startCC();">startCC</button>
+        <button onClick="initWebSocket();">Connect</button>
+        <button onClick="stopWebSocket();">Disconnect</button>
+    </p> 
+	
+	<p>
+        <textarea id="debugTextArea" style="width:400px;height:200px;"></textarea>
+    </p>
+	
+	<p>
+        <textarea id="callModule" style="width:400px;height:150px;">{
+	"id": 0,
+	"method": "cc.callModule",
+	"params": {
+		"moduleName": "HikUsbCamera",
+		"moduleMethod": "startStream",
+		"moduleParams": {
+			"notifySessionId": ""
+		}
+	}
+}
+		</textarea>
+        <button onClick="sendMessage('callModule');">调用模块接口</button>
+    </p>
+	
+ </body>
+   <script type='text/javascript'>
+		var debugTextArea = document.getElementById("debugTextArea");
+		function debug(message) {
+            debugTextArea.value += message + "\n";
+            debugTextArea.scrollTop = debugTextArea.scrollHeight;
+        }
+		function sendMessage(textId) {
+            var msg = document.getElementById(textId).value;
+            if ( websocket != null )
+            {
+                websocket.send( msg );					
+                console.log( "string sent :", '"'+msg+'"' );
+            }
+        }
+		
+        var playerInstance;
+        
+        function initcanvas() 
+        {
+          var canvas = document.getElementById('canvas');
+
+          // As a default initial behavior, pop up an alert when webgl context is lost. To make your
+          // application robust, you may want to override this behavior before shipping!
+          // See http://www.khronos.org/registry/webgl/specs/latest/1.0/#5.15.2
+          canvas.addEventListener("webglcontextlost", function(e) { alert('WebGL context lost. You will need to reload the page.'); e.preventDefault(); }, false);
+
+          return canvas;
+        }
+        
+        function test(){              
+            playerInstance = new Module.WebPlayer;
+            //playerInstance.InitPlayer();
+            playerInstance.CreateWindow(0,0,640,480); 
+			//playerInstance.Play();
+         };
+         
+         var Module = {        
+            canvas: initcanvas(),
+            onRuntimeInitialized:test   
+         };         
+         
+        window.onbeforeunload = function(){    
+			if (playerInstance) {
+				playerInstance.delete();
+			}
+		}
+		
+		function startCC() {
+			window.location = 'HikCC://port=1234';               
+        }
+		
+		var wsUri = "ws://localhost:1234";
+        var websocket = null;
+		var websocketForStream = null;
+		
+		function initWebSocket() {
+            try {
+                if (typeof MozWebSocket == 'function')
+                        WebSocket = MozWebSocket;
+                if ( websocket && websocket.readyState == 1 )
+                        websocket.close();
+                websocket = new WebSocket( wsUri );
+                websocket.onopen = function (evt) {
+                        debug("CONNECTED");						
+                };
+                websocket.onclose = function (evt) {
+                        debug("DISCONNECTED");
+                };
+                websocket.onmessage = function (evt) {                        
+                        debug( evt.data );
+                };
+                websocket.onerror = function (evt) {
+                    debug('ERROR: ' + evt.data);
+                };
+            } catch (exception) {
+                debug('ERROR: ' + exception);
+            }
+			initWebSocketForStream();
+        }
+		
+		function initWebSocketForStream() {
+			try {
+                if (typeof MozWebSocket == 'function')
+                    websocketForStream = MozWebSocket;
+                if ( websocketForStream && websocketForStream.readyState == 1 )
+                    websocketForStream.close();
+                websocketForStream = new WebSocket( wsUri );
+                websocketForStream.onopen = function (evt) {
+					websocketForStream.send( '{"id": 0,"method": "cc.getSessionId"}');
+                    debug("websocketForStream CONNECTED");						
+                };
+                websocketForStream.onclose = function (evt) {
+                    debug("websocketForStream DISCONNECTED");
+                };
+                websocketForStream.onmessage = function (evt) {                        
+                    if(typeof evt.data == "string")
+					{
+						debug(evt.data);
+					}
+					else
+					{
+						var reader = new FileReader();
+						reader.onload = function(evt){  
+							if(evt.target.readyState == FileReader.DONE){  
+								var data = new Uint8Array(evt.target.result);  
+								handler(data); 
+							}  
+						}  
+						reader.readAsArrayBuffer(evt.data); 
+					}
+                };
+                websocketForStream.onerror = function (evt) {
+					debug('websocketForStream ERROR: ' + evt.data);											
+                };
+            } catch (exception) {
+                debug('ERROR: ' + exception);
+            }
+		}
+
+        function stopWebSocket() {
+			if (websocketForStream)
+                websocketForStream.close();
+            if (websocket)
+                websocket.close();
+        }
+		
+		function handler(data){  
+			if(playerInstance)
+			{
+				if(false == playerInstance.InputData(data))
+				{
+					playerInstance.Stop();
+				}
+			}
+		}
+		
+   </script>
+    <script async type="text/javascript" src="WebPlayer.js"></script>
+</html>
