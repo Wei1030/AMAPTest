@@ -4,9 +4,6 @@
 #include <SDL/SDL.h>
 #include <SDL/SDL_video.h>
 #include <SDL/SDL_render.h>
-#include <SDL/SDL_rect.h>
-#include <SDL/SDL_thread.h>
-#include <SDL/SDL_mutex.h>
 
 extern "C"
 {
@@ -17,71 +14,17 @@ extern "C"
 #include "libavutil/error.h"
 };
 
-#include <string>
+#include "WebPlayer.h"
+
+using namespace emscripten;
 
 const unsigned int PER_DATA = 32 * 1024;
 
-class WebPlayer
-{
-public:
-	WebPlayer();
-	~WebPlayer();
-
-	bool InitPlayer();
-
-	bool SetStreamTypeProbeParams(int probesize , int max_analyze_duration );
-
-	bool CreateWindow(int x, int y, int w, int h);
-
-	bool Play();
-
-	bool InputData(const char* pData,unsigned int size);
-
-	void Stop();
-
-	void DestroyWindow();
-
-private:
-	static int fill_iobuffer(void * opaque, uint8_t *buf, int bufsize);
-	static int sdl_thread_handle_initial_data(void *opaque);
-
-	int readBuffer(uint8_t *buf, int bufsize);
-
-	enum PalyStatus
-	{
-		Status_No_Init = -2,
-		Status_No_Play,
-		Status_No_StreamType,
-		Status_Playing
-	};
-
-private:
-	void procInitailDataThread();
-	bool procData();
-
-private:
-	SDL_Window* 	m_screen;
-	SDL_Rect 		m_rect;
-	SDL_Renderer* 	m_renderer;
-	SDL_Texture* 	m_texture;
-	AVFormatContext* m_pfmt_ctx;
-	AVIOContext*	m_pio_ctx;
-	SDL_Thread*     m_thread;
-	AVCodecParameters* m_pcodec_par;
-	AVCodec*		m_pcodec;
-	AVCodecContext* m_pcodec_ctx;
-	AVFrame*        m_pfrm_raw;        // 帧，由包解码得到原始帧
-	AVFrame*        m_pfrm_yuv;        // 帧，由原始帧色彩转换得到
-	AVPacket*       m_ppacket;         // 包，从流中读出的一段数据
-	uint8_t*		m_pYUVdata;
-	SwsContext*		m_psws_ctx;
-	int 			m_iInitStatus;
-	unsigned int	m_video_idx;
-
-	std::string m_buffer;
-	SDL_cond *	m_cond;
-	SDL_mutex *	m_mutex;
-};
+extern "C" int fill_iobuffer(void * opaque, uint8_t *buf, int bufsize)
+{	
+	WebPlayer* pThis = (WebPlayer*)opaque;
+	return pThis->readBuffer(buf, bufsize);
+}
 
 WebPlayer::WebPlayer()
 	: m_screen(NULL)
@@ -90,7 +33,6 @@ WebPlayer::WebPlayer()
 	, m_texture(NULL)
 	, m_pfmt_ctx(NULL)
 	, m_pio_ctx(NULL)
-	, m_thread(NULL)
 	, m_pcodec_par(NULL)
 	, m_pcodec(NULL)
 	, m_pcodec_ctx(NULL)
@@ -99,11 +41,9 @@ WebPlayer::WebPlayer()
 	, m_ppacket(NULL)
 	, m_pYUVdata(NULL)
 	, m_psws_ctx(NULL)
-	, m_iInitStatus(Status_No_Init)
+	, m_bPlaying(false)
 	, m_video_idx(-1)
 {
-	m_cond = SDL_CreateCond();
-	m_mutex = SDL_CreateMutex();
 }
 
 WebPlayer::~WebPlayer()
@@ -124,70 +64,31 @@ WebPlayer::~WebPlayer()
 		m_pfmt_ctx = NULL;
 	}
 
-	SDL_DestroyCond(m_cond);
-	SDL_DestroyMutex(m_mutex);
-}
-
-int WebPlayer::fill_iobuffer(void * opaque, uint8_t *buf, int bufsize)
-{
-	if (bufsize <= 0)
-	{
-		return -1;
-	}
-	WebPlayer* pThis = (WebPlayer*)opaque;
-	return pThis->readBuffer(buf,bufsize);
-}
-
-int WebPlayer::sdl_thread_handle_initial_data(void *opaque)
-{
-	WebPlayer* pThis = (WebPlayer*)opaque;
-	pThis->procInitailDataThread();
 }
 
 int WebPlayer::readBuffer(uint8_t *buf, int bufsize)
 {
-	int n = bufsize;
-	if (Status_No_StreamType == m_iInitStatus)
+	if (false == m_bPlaying)
 	{
-		SDL_LockMutex(m_mutex);
-		while (m_buffer.empty())
-		{
-			SDL_CondWait(m_cond, m_mutex);
-		}
-		n = m_buffer.length();
-		n = n > bufsize ? bufsize : n;
-
-		memcpy(buf, m_buffer.data(), n);
-		//s_buffer.clear();
-		m_buffer = m_buffer.substr(n);
-		SDL_UnlockMutex(m_mutex);
-	}
-	else if (Status_Playing == m_iInitStatus)
-	{
-		n = m_buffer.length();
-		if (n > bufsize)
-		{
-			n = bufsize;
-			memcpy(buf, m_buffer.data(), n);
-			m_buffer = m_buffer.substr(n);
-		}
-		else
-		{
-			memcpy(buf, m_buffer.data(), n);
-			m_buffer.clear();
-		}
+		return 0;
 	}
 
+	int n = 0;
+	while (0 == (n = m_buffer.length())
+		&& m_bPlaying)
+	{
+		emscripten_sleep(16); //保存堆栈，返回js 事件循环中，16ms后 继续处理
+	}
+
+	n = n > bufsize ? bufsize : n;
+
+	memcpy(buf, m_buffer.data(), n);
+	m_buffer = m_buffer.substr(n);
 	return n;
 }
 
-bool WebPlayer::InitPlayer()
+bool WebPlayer::InitPlayer(int x, int y, int w, int h)
 {
-	if (m_iInitStatus != Status_No_Init)
-	{
-		return true;
-	}
-
 	bool bRet = false;
 
 	do
@@ -199,34 +100,19 @@ bool WebPlayer::InitPlayer()
 		}
 
 		uint8_t* iobuffer = (unsigned char *)av_malloc(PER_DATA);
-		m_pio_ctx = avio_alloc_context(iobuffer, PER_DATA, 0, this, &WebPlayer::fill_iobuffer, NULL, NULL);
+		m_pio_ctx = avio_alloc_context(iobuffer, PER_DATA, 0, this, &fill_iobuffer, NULL, NULL);
 		if (!m_pio_ctx)
 		{
 			break;
 		}
 
-		m_pfmt_ctx->pb = m_pio_ctx;
-
-		int ret = avformat_open_input(&m_pfmt_ctx, "nothing", NULL, NULL);
-		if (ret != 0)
-		{
-			printf("avformat_open_input() failed %d\n", ret);
-			break;
-		}		
+		m_pfmt_ctx->pb = m_pio_ctx;		
 
 		bRet = true;
 	} while (0);
 
 	if (false == bRet)
 	{
-		if (m_pio_ctx)
-		{			
-			avformat_close_input(&m_pfmt_ctx);
-			
-			av_freep(&m_pio_ctx->buffer);
-			avio_context_free(&m_pio_ctx);
-		}
-
 		if (m_pfmt_ctx)
 		{
 			avformat_free_context(m_pfmt_ctx);
@@ -338,35 +224,39 @@ bool WebPlayer::Play()
 
 	m_iInitStatus = Status_No_StreamType;
 
-	if (m_thread)
-	{
-		SDL_WaitThread(m_thread,NULL);
-	}
+	unsigned int probesize = m_pfmt_ctx->probesize ? m_pfmt_ctx->probesize: PER_DATA;
 
-	m_thread = SDL_CreateThread(&WebPlayer::sdl_thread_handle_initial_data, (void *)this);
- 	if (m_thread == NULL)
- 	{
-		m_iInitStatus = Status_No_Play;
- 		printf("SDL_CreateThread() failed: %s\n", SDL_GetError());		
-		return false;
- 	}
+	if (m_buffer.length() >= probesize)
+	{
+		procInitailData();
+	}
+	
 	return true;
 }
 
-bool WebPlayer::InputData(const char* pData, unsigned int size)
+bool WebPlayer::InputData(const std::string& data)
 {
 	if (Status_No_StreamType == m_iInitStatus)
-	{
-		SDL_LockMutex(m_mutex);
-		m_buffer.append(pData, size);
-		SDL_CondSignal(m_cond);
-		SDL_UnlockMutex(m_mutex);
+	{		
+		m_buffer.append(data);
+		unsigned int probesize = m_pfmt_ctx->probesize ? m_pfmt_ctx->probesize: PER_DATA;
+		if (m_buffer.length() < probesize)
+		{
+			return true;	
+		}
 
-		return true;
+		procInitailData();
+
+		if (m_iInitStatus == Status_Playing)
+		{
+			return true;
+		}	
+
+		return false;
 	}
 	else if(Status_Playing == m_iInitStatus)
 	{
-		m_buffer.append(pData, size);
+		m_buffer.append(data);
 		return procData();
 	}
 
@@ -379,12 +269,6 @@ void WebPlayer::Stop()
 		|| m_iInitStatus == Status_No_Play)
 	{
 		return;
-	}
-
-	if (m_thread)
-	{
-		SDL_WaitThread(m_thread,NULL);
-		m_thread = NULL;
 	}
 
 	m_iInitStatus = Status_No_Play;
@@ -446,14 +330,21 @@ void WebPlayer::DestroyWindow()
 	}
 }
 
-void WebPlayer::procInitailDataThread()
+void WebPlayer::procInitailData()
 {
 	bool bRet = false;
 	do 
 	{
+		int ret = avformat_open_input(&m_pfmt_ctx, NULL, NULL, NULL);
+		if (ret != 0)
+		{
+			printf("avformat_open_input() failed %d\n", ret);
+			break;
+		}		
+
 		//搜索流信息：读取一段数据，尝试解码，将取到的流信息填入pFormatCtx->streams
 		// m_pfmt_ctx->streams是一个指针数组，数组大小是pFormatCtx->nb_streams
-		int ret = avformat_find_stream_info(m_pfmt_ctx, NULL);
+		ret = avformat_find_stream_info(m_pfmt_ctx, NULL);
 		if (ret < 0)
 		{
 			printf("avformat_find_stream_info() failed %d\n", ret);
@@ -727,7 +618,6 @@ bool WebPlayer::procData()
 	return bRet;
 }
 
-
 // Binding code
 EMSCRIPTEN_BINDINGS(HikWebPlayer) {
 	class_<WebPlayer>("WebPlayer")
@@ -760,7 +650,7 @@ void one_iter()
 
 int main()
 {
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER))
+	if (SDL_Init(SDL_INIT_VIDEO ))
 	{
 		printf("SDL_Init() failed: %s\n", SDL_GetError());
 		return -1;
@@ -768,7 +658,7 @@ int main()
 
 	// void emscripten_set_main_loop(em_callback_func func, int fps, int simulate_infinite_loop);
 	emscripten_set_main_loop(one_iter, 60, 1);	
-
+	
 	return 0;
 }
 
